@@ -1,0 +1,273 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum ProjectStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum DifficultyLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum PrerequisiteType {
+  PROJECT
+  CONCEPT
+  TOOL
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  PASSWORD_RESET
+  ROLE_CHANGE
+  PROJECT_PUBLISH
+  PROJECT_ARCHIVE
+}
+
+// ============================================================
+// CORE MODELS
+// ============================================================
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique @db.VarChar(255)
+  passwordHash    String    @db.VarChar(255)
+  name            String?   @db.VarChar(100)
+  avatarUrl       String?   @db.VarChar(500)
+  role            UserRole  @default(USER)
+  emailVerified   Boolean   @default(false)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastLoginAt     DateTime?
+
+  // Relations
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  progress            UserProgress[]
+  notes               UserNote[]
+  bookmarks           UserBookmark[]
+  adminAudits         AdminAudit[]         @relation("AdminAudits")
+  createdProjects     Project[]            @relation("ProjectCreator")
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique @db.VarChar(255)
+  userId    String    @db.VarChar(255)
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique @db.VarChar(255)
+  userId    String    @db.VarChar(255)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+// ============================================================
+// PROJECT MODELS
+// ============================================================
+
+model Project {
+  id                 String          @id @default(cuid())
+  slug               String          @unique @db.VarChar(100)
+  title              String          @db.VarChar(200)
+  description        String          @db.Text
+  shortDescription   String?         @db.VarChar(500)
+  thumbnailUrl       String?         @db.VarChar(500)
+  youtubeUrl         String?         @db.VarChar(500)
+  codeWalkthroughUrl String?         @db.VarChar(500)
+  githubUrl          String?         @db.VarChar(500)
+  liveDemoUrl        String?         @db.VarChar(500)
+  status             ProjectStatus   @default(DRAFT)
+  difficulty         DifficultyLevel @default(BEGINNER)
+  estimatedHours     Int?            @default(0)
+  version            Int             @default(1)
+  publishedAt        DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  createdById        String          @db.VarChar(255)
+
+  // Relations
+  createdBy     User                  @relation("ProjectCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  versions      ProjectVersion[]
+  prerequisites ProjectPrerequisite[] @relation("ProjectPrerequisites")
+  requiredBy    ProjectPrerequisite[] @relation("RequiredByProjects")
+  progress      UserProgress[]
+  notes         UserNote[]
+  bookmarks     UserBookmark[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([difficulty])
+  @@index([createdById])
+  @@index([publishedAt])
+  @@map("projects")
+}
+
+model ProjectVersion {
+  id          String   @id @default(cuid())
+  projectId   String   @db.VarChar(255)
+  version     Int
+  title       String   @db.VarChar(200)
+  description String   @db.Text
+  content     String   @db.LongText
+  changelog   String?  @db.Text
+  createdAt   DateTime @default(now())
+  createdById String   @db.VarChar(255)
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, version])
+  @@index([projectId])
+  @@index([createdById])
+  @@map("projects_versions")
+}
+
+model ProjectPrerequisite {
+  id             String           @id @default(cuid())
+  projectId      String           @db.VarChar(255)
+  prerequisiteId String           @db.VarChar(255)
+  type           PrerequisiteType @default(PROJECT)
+  name           String           @db.VarChar(200)
+  description    String?          @db.Text
+  externalUrl    String?          @db.VarChar(500)
+  isRequired     Boolean          @default(true)
+  order          Int              @default(0)
+  createdAt      DateTime         @default(now())
+
+  project      Project @relation("ProjectPrerequisites", fields: [projectId], references: [id], onDelete: Cascade)
+  prerequisite Project @relation("RequiredByProjects", fields: [prerequisiteId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, prerequisiteId])
+  @@index([projectId])
+  @@index([prerequisiteId])
+  @@index([type])
+  @@map("project_prerequisites")
+}
+
+// ============================================================
+// USER PROGRESS & ENGAGEMENT MODELS
+// ============================================================
+
+model UserProgress {
+  id               String    @id @default(cuid())
+  userId           String    @db.VarChar(255)
+  projectId        String    @db.VarChar(255)
+  completedAt      DateTime?
+  progressPercent  Int       @default(0)
+  timeSpentMinutes Int       @default(0)
+  lastPosition     String?   @db.Text
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([userId])
+  @@index([projectId])
+  @@index([completedAt])
+  @@map("user_progress")
+}
+
+model UserNote {
+  id        String   @id @default(cuid())
+  userId    String   @db.VarChar(255)
+  projectId String   @db.VarChar(255)
+  content   String   @db.Text
+  position  String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([createdAt])
+  @@map("user_notes")
+}
+
+model UserBookmark {
+  id        String   @id @default(cuid())
+  userId    String   @db.VarChar(255)
+  projectId String   @db.VarChar(255)
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([userId])
+  @@index([projectId])
+  @@map("user_bookmarks")
+}
+
+// ============================================================
+// ADMIN & AUDIT MODELS
+// ============================================================
+
+model AdminAudit {
+  id         String      @id @default(cuid())
+  adminId    String?     @db.VarChar(255)
+  action     AuditAction
+  entityType String      @db.VarChar(50)
+  entityId   String      @db.VarChar(255)
+  oldData    String?     @db.Text
+  newData    String?     @db.Text
+  ipAddress  String?     @db.VarChar(45)
+  userAgent  String?     @db.Text
+  createdAt  DateTime    @default(now())
+
+  admin User? @relation("AdminAudits", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([adminId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("admin_audit")
+}
